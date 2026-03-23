@@ -10,7 +10,7 @@ from model import LinguistBiLSTM_CRF
 
 def train_model():
     # --- 1. Configuration & Setup ---
-    PROCESSED_DATA_PATH = "../data/processed/training_data.jsonl"
+    PROCESSED_DATA_PATH = "../data/training_data.jsonl"
     MODEL_SAVE_PATH = "../models/saved_weights.pt"
 
     BATCH_SIZE = 16

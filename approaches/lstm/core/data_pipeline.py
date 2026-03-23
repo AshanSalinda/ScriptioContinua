@@ -74,8 +74,8 @@ def process_raw_data(input_filepath, output_filepath):
 # --- Execution Block ---
 if __name__ == "__main__":
     # Define our paths based on the project structure
-    RAW_DATA_PATH = "../data/raw/english_sentences.txt"
-    PROCESSED_DATA_PATH = "../data/processed/training_data.jsonl"
+    RAW_DATA_PATH = "../../../raw_sentences.txt"
+    PROCESSED_DATA_PATH = "../data/training_data.jsonl"
 
     # For testing right now, let's just create a dummy raw file if it doesn't exist
     os.makedirs(os.path.dirname(RAW_DATA_PATH), exist_ok=True)

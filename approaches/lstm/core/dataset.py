@@ -72,7 +72,7 @@ class ScriptioDataset(Dataset):
 
 # --- Execution Block (For Testing) ---
 if __name__ == "__main__":
-    PROCESSED_DATA_PATH = "../data/processed/training_data.jsonl"
+    PROCESSED_DATA_PATH = "../data/training_data.jsonl"
 
     print("Loading Dataset...")
     dataset = ScriptioDataset(PROCESSED_DATA_PATH)
