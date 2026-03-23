@@ -17,7 +17,7 @@ def train_model():
     # Hyperparameters (The "settings" for our learning process)
     BATCH_SIZE = 16  # How many windows to look at before updating weights
     LEARNING_RATE = 0.001  # How aggressively to tweak the weights (too high = erratic, too low = slow)
-    EPOCHS = 10  # How many times to loop through the ENTIRE dataset
+    EPOCHS = 20  # How many times to loop through the ENTIRE dataset
 
     # Ensure the models directory exists
     os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)

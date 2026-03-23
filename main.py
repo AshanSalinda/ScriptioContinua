@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from src.model import LinguistBiLSTM
 
 # --- Configuration ---
@@ -27,56 +28,95 @@ def load_system():
     return model, char2idx, idx2tag
 
 
-def predict_spaces(text, model, char2idx, idx2tag):
-    """Passes a spaceless string through the AI to predict spacing."""
-    # 1. Pad the input text exactly like we did in dataset.py
+def predict_multiple_spaces(text, model, char2idx, idx2tag, internal_beams=15, return_top=3):
+    """
+    Uses Beam Search to find the best paths, then deduplicates by text
+    to ensure the user sees distinct segmentations.
+    """
     padded_text = [PAD_CHAR] * HALF_WINDOW + list(text) + [PAD_CHAR] * HALF_WINDOW
+    beams = [(0.0, "", [])]
 
-    predicted_tags = []
-
-    # 2. Slide the window across the text
-    with torch.no_grad():  # Turn off gradient tracking to save memory
+    with torch.no_grad():
         for i in range(len(text)):
             window_chars = padded_text[i: i + WINDOW_SIZE]
-
-            # Convert characters to IDs (use a default '0' or PAD if character is unknown)
             window_ids = [char2idx.get(c, char2idx[PAD_CHAR]) for c in window_chars]
-
-            # Convert to PyTorch Tensor and add a batch dimension of 1
             x = torch.tensor([window_ids], dtype=torch.long)
 
-            # Get AI prediction
             logits = model(x)
-            predicted_id = torch.argmax(logits, dim=1).item()
+            log_probs = F.log_softmax(logits, dim=1).squeeze()
 
-            predicted_tags.append(idx2tag[predicted_id])
+            # --- THE FIX ---
+            # Find out how many tags the model actually has (e.g., 5 or 6)
+            available_tags = log_probs.size(0)
 
-    # 3. Reconstruct the string based on BIOES tags
-    segmented_text = ""
-    for char, tag in zip(text, predicted_tags):
-        segmented_text += char
-        # If the AI says this character is the End of a word, or a Single-letter word, add a space!
-        if tag in ['E', 'S']:
-            segmented_text += " "
+            # We can only branch out by the number of tags that actually exist!
+            branch_factor = min(internal_beams, available_tags)
 
-    return segmented_text.strip(), predicted_tags
+            # Get the top K valid tags for this character
+            topk_log_probs, topk_indices = torch.topk(log_probs, branch_factor)
+
+            new_beams = []
+
+            for score, segmented_text, tags in beams:
+                # Loop through our valid tag branches (e.g., top 5)
+                for j in range(branch_factor):
+                    tag_prob = topk_log_probs[j].item()
+                    tag_id = topk_indices[j].item()
+                    tag_str = idx2tag[tag_id]
+
+                    new_score = score + tag_prob
+
+                    new_char = text[i]
+                    if tag_str in ['E', 'S']:
+                        new_char += " "
+
+                    new_beams.append((new_score, segmented_text + new_char, tags + [tag_str]))
+
+            # Sort all the newly branched realities by score
+            new_beams.sort(key=lambda x: x[0], reverse=True)
+
+            # Prune the tree: NOW we enforce the internal_beams limit (keep top 15 paths overall)
+            beams = new_beams[:internal_beams]
+
+    # --- Text-Based Deduplication ---
+    unique_texts = {}
+
+    for score, segmented_text, tags in beams:
+        # Clean up any trailing spaces or accidental double spaces
+        clean_text = " ".join(segmented_text.strip().split())
+
+        # If we haven't seen this text variation, OR this mathematical path has a higher score
+        if clean_text not in unique_texts or score > unique_texts[clean_text]["score"]:
+            unique_texts[clean_text] = {
+                "score": round(score, 4),
+                "text": clean_text,
+                "tags": tags
+            }
+
+    # Convert dictionary back to a list, sort it, and return only the exact number requested
+    final_results = list(unique_texts.values())
+    final_results.sort(key=lambda x: x["score"], reverse=True)
+
+    return final_results[:return_top]
 
 
 if __name__ == "__main__":
     model, char2idx, idx2tag = load_system()
 
-    # Test strings from our training data (it should get these perfect)
-    test_strings = [
-        "thequickbrownfoxjumpsoverthelazydog",
-        "thisisatestofthescriptiocontinuasystem",
-        "machinelearningjumpsthetestsystemisagoodchallenge"
-    ]
+    test_string = "peoplethinkthatgodisnowhere"
 
-    print("\n--- Epigrascan Linguist Module Test ---")
-    for text in test_strings:
-        print(f"\nInput (Scriptio Continua): {text}")
+    print(f"\nInput (Scriptio Continua): {test_string}")
 
-        segmented, tags = predict_spaces(text, model, char2idx, idx2tag)
+    results = predict_multiple_spaces(
+        test_string,
+        model,
+        char2idx,
+        idx2tag,
+        internal_beams=15,  # Track 15 possibilities in memory
+        return_top=3  # Only show the top 3 UNIQUE strings to the user
+    )
 
-        print(f"Predicted Tags: {' '.join(tags)}")
-        print(f"AI Segmented Output:     {segmented}")
+    for i, result in enumerate(results):
+        print(f"\nOption {i + 1} (Confidence Score: {result['score']})")
+        print(f"Text: {result['text']}")
+        print(f"Tags: {' '.join(result['tags'])}")
