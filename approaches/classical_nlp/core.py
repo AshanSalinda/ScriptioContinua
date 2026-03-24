@@ -46,6 +46,7 @@ Composite Step-Score Formula (log-space)
     + w_char    × log P_char(word)              character plausibility
     + w_lexicon × lexicon_bonus(word)           known-word reward
     + w_morph   × morph_score(word)             suffix/prefix validity
+    + w_length  × log P_length(len(word))       word size realism
     [+ oov_penalty  if word is out-of-vocabulary]
 
 Usage
@@ -118,6 +119,7 @@ class LinguistConfig:
     w_char:     float = 0.7   # Character n-gram plausibility
     w_lexicon:  float = 3.0   # Known-word membership bonus (reward/penalty)
     w_morph:    float = 0.5   # Morphological suffix/prefix validity
+    w_length:   float = 0.3   # biases toward realistic word lengths
 
     # ── Morphology ────────────────────────────────────────────────────────────
     suffix_len: int = 4   # Max suffix length to track
@@ -141,6 +143,7 @@ class WordAnnotation:
     is_oov:      bool    # True = not seen in dictionary or corpus
     char_score:  float   # Average per-character log-prob (higher = more word-like)
     morph_score: float   # Morphological validity (suffix + prefix pattern score)
+    length_score: float
     step_score:  float   # Total composite score contribution of this word
 
     @property
@@ -566,9 +569,9 @@ class CompositeScorer:
         self,
         word:       str,
         prev_word:  str,    # _BOS at start of sequence
-    ) -> Tuple[float, float, float, float]:
+    ) -> Tuple[float, float, float, float, float]:
         """
-        Returns ``(total, bigram_s, char_s, morph_s)`` for one word.
+        Returns ``(total, bigram_s, char_s, morph_s, length_s)`` for one word.
         These components are logged in WordAnnotation for transparency.
         """
         cfg = self.cfg
@@ -577,20 +580,23 @@ class CompositeScorer:
         char_s   = self.char.log_prob(word)
         lex_b    = 1.0 if self.lexicon.contains(word) else -1.0
         morph_s  = self.morph.morph_score(word)
+        length_s = self.morph.length_log_prob(len(word))
 
         total = (
             cfg.w_bigram  * bigram_s
           + cfg.w_char    * char_s
           + cfg.w_lexicon * lex_b
           + cfg.w_morph   * morph_s
+          + cfg.w_length * length_s
         )
-        return total, bigram_s, char_s, morph_s
+        return total, bigram_s, char_s, morph_s, length_s
 
     def make_annotation(
         self,
-        word:       str,
-        char_s:     float,
-        morph_s:    float,
+        word: str,
+        char_s: float,
+        morph_s: float,
+        length_s: float,
         step_score: float,
     ) -> WordAnnotation:
         return WordAnnotation(
@@ -598,6 +604,7 @@ class CompositeScorer:
             is_oov      = not self.lexicon.contains(word),
             char_score  = char_s,
             morph_score = morph_s,
+            length_score= length_s,
             step_score  = step_score,
         )
 
@@ -688,15 +695,15 @@ class BeamSearch:
 
                 # ── 3. Score and push ──────────────────────────────────────────
                 for word, is_oov in candidates:
-                    step, bigram_s, char_s, morph_s = self.scorer.score_word(
+                    step, bigram_s, char_s, morph_s, length_s = self.scorer.score_word(
                         word, last_word
                     )
                     if is_oov:
                         step += cfg.oov_penalty
 
                     new_neg = neg_s - step     # negate for min-heap
-                    ann     = self.scorer.make_annotation(
-                        word, char_s, morph_s, step
+                    ann = self.scorer.make_annotation(
+                        word, char_s, morph_s, length_s, step
                     )
                     new_item: _Item = (
                         new_neg,
